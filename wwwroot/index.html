@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Бронирование билетов в Кино</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .section { margin-bottom: 20px; border: 1px solid #ccc; padding: 15px; border-radius: 5px; }
+        .flex { display: flex; gap: 10px; }
+        .auth-mode { background: #f0f0f0; padding: 10px; margin-bottom: 20px; font-weight: bold; }
+        table { border-collapse: collapse; width: 100%; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+    </style>
+</head>
+<body>
+
+    <h1>Кинотеатр: Бронирование билетов</h1>
+
+    <div class="auth-mode">
+        Выберите метод аутентификации:
+        <label><input type="radio" name="authMethod" value="cookie" checked onclick="toggleAuthMethod('cookie')"> Cookie</label>
+        <label><input type="radio" name="authMethod" value="jwt" onclick="toggleAuthMethod('jwt')"> JWT</label>
+    </div>
+
+    <div class="section">
+        <h2>Регистрация / Вход</h2>
+        <div class="flex">
+            <input type="text" id="regName" placeholder="Имя">
+            <input type="email" id="email" placeholder="Email">
+            <input type="password" id="password" placeholder="Пароль">
+        </div>
+        <br>
+        <button onclick="register()">Зарегистрироваться</button>
+        <button onclick="login()">Войти</button>
+        <button onclick="logout()">Выйти (для Cookie)</button>
+        <a href="/auth/login-github" style="display: inline-block; padding: 5px 10px; background-color: #24292e; color: white; text-decoration: none; border-radius: 3px; font-size: 14px; margin-left: 10px;">Войти через GitHub</a>
+        <p id="authStatus"></p>
+    </div>
+
+    <div class="section">
+        <h2>Доступные сеансы кино</h2>
+        <button onclick="loadMovies()">Обновить список сеансов</button>
+        <br><br>
+        <table id="moviesTable">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Название</th>
+                    <th>Время начала</th>
+                    <th>Свободные места</th>
+                    <th>Бронирование</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+
+    <div class="section">
+        <h2>Мои Бронирования</h2>
+        <button onclick="loadBookings()">Показать мои бронирования</button>
+        <br><br>
+        <ul id="bookingsList"></ul>
+    </div>
+
+    <script>
+        let currentAuthMethod = 'cookie';
+        let jwtToken = '';
+
+        function checkGitHubLogin() {
+            const urlParams = new URLSearchParams(window.location.search);
+            if (urlParams.get('github_login') === 'success') {
+                const name = urlParams.get('name') || 'GitHub User';
+                document.getElementById("authStatus").innerText = "Вход через GitHub выполнен успешно: привет, " + name;
+                window.history.replaceState({}, document.title, window.location.pathname);
+            }
+        }
+
+        function toggleAuthMethod(method) {
+            currentAuthMethod = method;
+            document.getElementById("authStatus").innerText = "Выбран режим: " + method.toUpperCase();
+        }
+
+        async function register() {
+            const name = document.getElementById("regName").value;
+            const email = document.getElementById("email").value;
+            const password = document.getElementById("password").value;
+
+            const url = currentAuthMethod === 'cookie' ? '/auth/register' : '/jwt/register';
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, password, name })
+            });
+
+            const text = await response.text();
+            alert(text);
+        }
+
+        async function login() {
+            const email = document.getElementById("email").value;
+            const password = document.getElementById("password").value;
+
+            const url = currentAuthMethod === 'cookie' ? '/auth/login' : '/jwt/login';
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, password })
+            });
+
+            if (response.ok) {
+                if (currentAuthMethod === 'jwt') {
+                    const data = await response.json();
+                    jwtToken = data.token;
+                    document.getElementById("authStatus").innerText = "Авторизован через JWT";
+                } else {
+                    const data = await response.json();
+                    document.getElementById("authStatus").innerText = "Авторизован через Cookie: привет, " + data.user;
+                }
+            } else {
+                alert("Ошибка авторизации");
+            }
+        }
+
+        async function logout() {
+            if (currentAuthMethod === 'cookie') {
+                await fetch('/auth/logout', { method: 'POST' });
+                document.getElementById("authStatus").innerText = "Вы вышли";
+            } else {
+                jwtToken = '';
+                document.getElementById("authStatus").innerText = "JWT токен удален из памяти";
+            }
+        }
+
+        async function loadMovies() {
+            const response = await fetch('/movies');
+            const movies = await response.json();
+            const tbody = document.querySelector("#moviesTable tbody");
+            tbody.innerHTML = '';
+
+            movies.forEach(movie => {
+                const tr = document.createElement("tr");
+                tr.innerHTML = "<td>" + movie.id + "</td>" +
+                               "<td>" + movie.title + "</td>" +
+                               "<td>" + new Date(movie.startTime).toLocaleString() + "</td>" +
+                               "<td>" + movie.availableSeats + "</td>" +
+                               "<td>" +
+                               "<input type='number' id='seats-" + movie.id + "' value='1' min='1' max='10' style='width: 50px;'>" +
+                               "<button onclick='book(" + movie.id + ")'>Забронировать</button>" +
+                               "</td>";
+                tbody.appendChild(tr);
+            });
+        }
+
+        async function book(movieId) {
+            const seats = parseInt(document.getElementById("seats-" + movieId).value);
+            const headers = { 'Content-Type': 'application/json' };
+
+            if (currentAuthMethod === 'jwt') {
+                if (!jwtToken) {
+                    alert("Сначала необходимо авторизоваться (JWT).");
+                    return;
+                }
+                headers['Authorization'] = "Bearer " + jwtToken;
+            }
+
+            const url = currentAuthMethod === 'cookie' ? '/bookings/create' : '/jwt/bookings/create';
+
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: headers,
+                body: JSON.stringify({ movieShowId: movieId, numberOfSeats: seats })
+            });
+
+            if (response.ok) {
+                alert("Успешно забронировано!");
+                loadMovies();
+            } else {
+                const err = await response.text();
+                alert("Ошибка: " + (err || response.statusText));
+            }
+        }
+
+        async function loadBookings() {
+            const headers = {};
+            if (currentAuthMethod === 'jwt') {
+                if (!jwtToken) {
+                    alert("Авторизуйтесь через JWT");
+                    return;
+                }
+                headers['Authorization'] = "Bearer " + jwtToken;
+            }
+
+            const url = currentAuthMethod === 'cookie' ? '/bookings' : '/jwt/bookings';
+
+            const response = await fetch(url, { headers });
+            if (response.ok) {
+                const bookings = await response.json();
+                const list = document.getElementById("bookingsList");
+                list.innerHTML = '';
+                bookings.forEach(b => {
+                    const li = document.createElement("li");
+                    li.innerText = "Бронирование #" + b.id + ": Сеанс ID " + b.movieShowId + ", Мест: " + b.numberOfSeats + " (Забронировано: " + new Date(b.bookingTime).toLocaleString() + ")";
+                    list.appendChild(li);
+                });
+            } else {
+                alert("Ошибка загрузки бронирований. Возможно, сессия истекла или вы не авторизованы.");
+            }
+        }
+
+        checkGitHubLogin();
+        loadMovies();
+    </script>
+</body>
+</html>
